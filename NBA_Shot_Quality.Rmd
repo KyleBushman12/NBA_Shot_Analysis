@@ -1,0 +1,3179 @@
+---
+title: "NBA_Shot_Analysis"
+author: "Kyle Bushman"
+date: "2025-09-11"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r, include = FALSE}
+library(tidyverse)
+library(hoopR)
+library(xgboost)
+library(nbaplotR)
+library(Matrix)
+```
+
+# Introduction
+
+This analysis aims to evaluate the quality of shots taken by NBA players and teams while also evaluating their ability to make shots at a higher rate than average. The full process with visualizations are provided below. I start with the 2024-25 season, providing explanation of process, then provide only the visualizations and charts for previous seasons. Data was found using the "hoopR" package in R. Shot success probabilities were estimated using the "xgboost" package in R. My goal is to help basketball fans understand the shots taken by players and how shooters have been able to accrue "value" for themselves by making shots.
+
+\break
+
+```{r, echo = FALSE}
+shots_2025 <- load_nba_pbp(seasons = 2025) |>
+  filter(shooting_play == TRUE & !grepl("Free Throw", type_text)) |>
+  select(team_id, home_team_abbrev, away_team_abbrev, athlete_id_1,
+         coordinate_x_raw, coordinate_y_raw, coordinate_x, coordinate_y,
+         score_value, type_id, type_text, text) |>
+  filter(team_id <= 30)
+shots_2024 <- load_nba_pbp(seasons = 2024) |>
+  filter(shooting_play == TRUE & !grepl("Free Throw", type_text)) |>
+  select(team_id, home_team_abbrev, away_team_abbrev, athlete_id_1,
+         coordinate_x_raw, coordinate_y_raw, coordinate_x, coordinate_y,
+         score_value, type_id, type_text, text) |>
+  filter(team_id <= 30)
+shots_2023 <- load_nba_pbp(seasons = 2023) |>
+  filter(shooting_play == TRUE & !grepl("Free Throw", type_text)) |>
+  select(team_id, home_team_abbrev, away_team_abbrev, athlete_id_1,
+         coordinate_x_raw, coordinate_y_raw, coordinate_x, coordinate_y,
+         score_value, type_id, type_text, text) |>
+  filter(team_id <= 30)
+shots_2022 <- load_nba_pbp(seasons = 2022) |>
+  filter(shooting_play == TRUE & !grepl("Free Throw", type_text)) |>
+  select(team_id, home_team_abbrev, away_team_abbrev, athlete_id_1,
+         coordinate_x_raw, coordinate_y_raw, coordinate_x, coordinate_y,
+         score_value, type_id, type_text, text) |>
+  filter(team_id <= 30)
+shots_2021 <- load_nba_pbp(seasons = 2021) |>
+  filter(shooting_play == TRUE & !grepl("Free Throw", type_text)) |>
+  select(team_id, home_team_abbrev, away_team_abbrev, athlete_id_1,
+         coordinate_x_raw, coordinate_y_raw, coordinate_x, coordinate_y,
+         score_value, type_id, type_text, text) |>
+  filter(team_id <= 30)
+shots_2020 <- load_nba_pbp(seasons = 2020) |>
+  filter(shooting_play == TRUE & !grepl("Free Throw", type_text)) |>
+  select(team_id, home_team_abbrev, away_team_abbrev, athlete_id_1,
+         coordinate_x_raw, coordinate_y_raw, coordinate_x, coordinate_y,
+         score_value, type_id, type_text, text) |>
+  filter(team_id <= 30)
+shots_2019 <- load_nba_pbp(seasons = 2019) |>
+  filter(shooting_play == TRUE & !grepl("Free Throw", type_text)) |>
+  select(team_id, home_team_abbrev, away_team_abbrev, athlete_id_1,
+         coordinate_x_raw, coordinate_y_raw, coordinate_x, coordinate_y,
+         score_value, type_id, type_text, text) |>
+  filter(team_id <= 30)
+shots_2018 <- load_nba_pbp(seasons = 2018) |>
+  filter(shooting_play == TRUE & !grepl("Free Throw", type_text)) |>
+  select(team_id, home_team_abbrev, away_team_abbrev, athlete_id_1,
+         coordinate_x_raw, coordinate_y_raw, coordinate_x, coordinate_y,
+         score_value, type_id, type_text, text) |>
+  filter(team_id <= 30)
+shots_2017 <- load_nba_pbp(seasons = 2017) |>
+  filter(shooting_play == TRUE & !grepl("Free Throw", type_text)) |>
+  select(team_id, home_team_abbrev, away_team_abbrev, athlete_id_1,
+         coordinate_x_raw, coordinate_y_raw, coordinate_x, coordinate_y,
+         score_value, type_id, type_text, text) |>
+  filter(team_id <= 30)
+shots_2016 <- load_nba_pbp(seasons = 2016) |>
+  filter(shooting_play == TRUE & !grepl("Free Throw", type_text)) |>
+  select(team_id, home_team_abbrev, away_team_abbrev, athlete_id_1,
+         coordinate_x_raw, coordinate_y_raw, coordinate_x, coordinate_y,
+         score_value, type_id, type_text, text) |>
+  filter(team_id <= 30)
+shots_2015 <- load_nba_pbp(seasons = 2015) |>
+  filter(shooting_play == TRUE & !grepl("Free Throw", type_text)) |>
+  select(team_id, home_team_abbrev, away_team_abbrev, athlete_id_1,
+         coordinate_x_raw, coordinate_y_raw, coordinate_x, coordinate_y,
+         score_value, type_id, type_text, text) |>
+  filter(team_id <= 30)
+
+team_key <- load_nba_team_box() |>
+  select(team_id, team_name, team_abbreviation) |>
+  distinct() |>
+  arrange(desc(team_id)) |>
+  filter(team_id <= 30)
+
+player_key_2025 <- load_nba_player_box(seasons = 2025) |>
+  select(athlete_id, athlete_display_name, team_abbreviation) |>
+  distinct() |>
+  arrange(athlete_display_name)
+
+player_key_2024 <- load_nba_player_box(seasons = 2024) |>
+  select(athlete_id, athlete_display_name, team_abbreviation) |>
+  distinct() |>
+  arrange(athlete_display_name)
+
+player_key_2023 <- load_nba_player_box(seasons = 2023) |>
+  select(athlete_id, athlete_display_name, team_abbreviation) |>
+  distinct() |>
+  arrange(athlete_display_name)
+
+player_key_2022 <- load_nba_player_box(seasons = 2022) |>
+  select(athlete_id, athlete_display_name, team_abbreviation) |>
+  distinct() |>
+  arrange(athlete_display_name)
+
+player_key_2021 <- load_nba_player_box(seasons = 2021) |>
+  select(athlete_id, athlete_display_name, team_abbreviation) |>
+  distinct() |>
+  arrange(athlete_display_name)
+
+player_key_2020 <- load_nba_player_box(seasons = 2020) |>
+  select(athlete_id, athlete_display_name, team_abbreviation) |>
+  distinct() |>
+  arrange(athlete_display_name)
+
+player_key_2019 <- load_nba_player_box(seasons = 2019) |>
+  select(athlete_id, athlete_display_name, team_abbreviation) |>
+  distinct() |>
+  arrange(athlete_display_name)
+
+player_key_2018 <- load_nba_player_box(seasons = 2018) |>
+  select(athlete_id, athlete_display_name, team_abbreviation) |>
+  distinct() |>
+  arrange(athlete_display_name)
+
+player_key_2017 <- load_nba_player_box(seasons = 2017) |>
+  select(athlete_id, athlete_display_name, team_abbreviation) |>
+  distinct() |>
+  arrange(athlete_display_name)
+
+player_key_2016 <- load_nba_player_box(seasons = 2016) |>
+  select(athlete_id, athlete_display_name, team_abbreviation) |>
+  distinct() |>
+  arrange(athlete_display_name)
+
+player_key_2015 <- load_nba_player_box(seasons = 2015) |>
+  select(athlete_id, athlete_display_name, team_abbreviation) |>
+  distinct() |>
+  arrange(athlete_display_name)
+```
+
+```{r, echo = FALSE}
+shots_2025 <- left_join(shots_2025, team_key, by = "team_id")
+shots_2024 <- left_join(shots_2024, team_key, by = "team_id")
+shots_2023 <- left_join(shots_2023, team_key, by = "team_id")
+shots_2022 <- left_join(shots_2022, team_key, by = "team_id")
+shots_2021 <- left_join(shots_2021, team_key, by = "team_id")
+shots_2020 <- left_join(shots_2020, team_key, by = "team_id")
+shots_2019 <- left_join(shots_2019, team_key, by = "team_id")
+shots_2018 <- left_join(shots_2018, team_key, by = "team_id")
+shots_2017 <- left_join(shots_2017, team_key, by = "team_id")
+shots_2016 <- left_join(shots_2016, team_key, by = "team_id")
+shots_2015 <- left_join(shots_2015, team_key, by = "team_id")
+```
+
+```{r, echo = FALSE}
+shots_2025$shot_val <- ifelse(grepl("three point", shots_2025$text),
+                              3, 2)
+shots_2024$shot_val <- ifelse(grepl("three point", shots_2024$text),
+                              3, 2)
+shots_2023$shot_val <- ifelse(grepl("three point", shots_2023$text),
+                              3, 2)
+shots_2022$shot_val <- ifelse(grepl("three point", shots_2022$text),
+                              3, 2)
+shots_2021$shot_val <- ifelse(grepl("three point", shots_2021$text),
+                              3, 2)
+shots_2020$shot_val <- ifelse(grepl("three point", shots_2020$text),
+                              3, 2)
+shots_2019$shot_val <- ifelse(grepl("three point", shots_2019$text),
+                              3, 2)
+shots_2018$shot_val <- ifelse(grepl("three point", shots_2018$text),
+                              3, 2)
+shots_2017$shot_val <- ifelse(grepl("three point", shots_2017$text),
+                              3, 2)
+shots_2016$shot_val <- ifelse(grepl("three point", shots_2016$text),
+                              3, 2)
+shots_2015$shot_val <- ifelse(grepl("three point", shots_2015$text),
+                              3, 2)
+```
+
+```{r, echo = FALSE}
+shots_2025$shot_made <- ifelse(shots_2025$score_value > 0,
+                              1, 0)
+shots_2024$shot_made <- ifelse(shots_2024$score_value > 0,
+                              1, 0)
+shots_2023$shot_made <- ifelse(shots_2023$score_value > 0,
+                              1, 0)
+shots_2022$shot_made <- ifelse(shots_2022$score_value > 0,
+                              1, 0)
+shots_2021$shot_made <- ifelse(shots_2021$score_value > 0,
+                              1, 0)
+shots_2020$shot_made <- ifelse(shots_2020$score_value > 0,
+                              1, 0)
+shots_2019$shot_made <- ifelse(shots_2019$score_value > 0,
+                              1, 0)
+shots_2018$shot_made <- ifelse(shots_2018$score_value > 0,
+                              1, 0)
+shots_2017$shot_made <- ifelse(shots_2017$score_value > 0,
+                              1, 0)
+shots_2016$shot_made <- ifelse(shots_2016$score_value > 0,
+                              1, 0)
+shots_2015$shot_made <- ifelse(shots_2015$score_value > 0,
+                              1, 0)
+```
+
+```{r, echo = FALSE}
+shots_2025$Defender <- ifelse(shots_2025$team_abbreviation ==
+                                shots_2025$home_team_abbrev,
+                              shots_2025$away_team_abbrev,
+                              shots_2025$home_team_abbrev)
+shots_2024$Defender <- ifelse(shots_2024$team_abbreviation ==
+                                shots_2024$home_team_abbrev,
+                              shots_2024$away_team_abbrev,
+                              shots_2024$home_team_abbrev)
+shots_2023$Defender <- ifelse(shots_2023$team_abbreviation ==
+                                shots_2023$home_team_abbrev,
+                              shots_2023$away_team_abbrev,
+                              shots_2023$home_team_abbrev)
+shots_2022$Defender <- ifelse(shots_2022$team_abbreviation ==
+                                shots_2022$home_team_abbrev,
+                              shots_2022$away_team_abbrev,
+                              shots_2022$home_team_abbrev)
+shots_2021$Defender <- ifelse(shots_2021$team_abbreviation ==
+                                shots_2021$home_team_abbrev,
+                              shots_2021$away_team_abbrev,
+                              shots_2021$home_team_abbrev)
+shots_2020$Defender <- ifelse(shots_2020$team_abbreviation ==
+                                shots_2020$home_team_abbrev,
+                              shots_2020$away_team_abbrev,
+                              shots_2020$home_team_abbrev)
+shots_2019$Defender <- ifelse(shots_2019$team_abbreviation ==
+                                shots_2019$home_team_abbrev,
+                              shots_2019$away_team_abbrev,
+                              shots_2019$home_team_abbrev)
+shots_2018$Defender <- ifelse(shots_2018$team_abbreviation ==
+                                shots_2018$home_team_abbrev,
+                              shots_2018$away_team_abbrev,
+                              shots_2018$home_team_abbrev)
+shots_2017$Defender <- ifelse(shots_2017$team_abbreviation ==
+                                shots_2017$home_team_abbrev,
+                              shots_2017$away_team_abbrev,
+                              shots_2017$home_team_abbrev)
+shots_2016$Defender <- ifelse(shots_2016$team_abbreviation ==
+                                shots_2016$home_team_abbrev,
+                              shots_2016$away_team_abbrev,
+                              shots_2016$home_team_abbrev)
+shots_2015$Defender <- ifelse(shots_2015$team_abbreviation ==
+                                shots_2015$home_team_abbrev,
+                              shots_2015$away_team_abbrev,
+                              shots_2015$home_team_abbrev)
+```
+
+```{r, echo = FALSE}
+shots_2025 <- left_join(shots_2025, player_key_2025,
+                        by = c("athlete_id_1" = "athlete_id",
+                               "team_abbreviation"))
+shots_2024 <- left_join(shots_2024, player_key_2024,
+                        by = c("athlete_id_1" = "athlete_id",
+                               "team_abbreviation"))
+shots_2023 <- left_join(shots_2023, player_key_2023,
+                        by = c("athlete_id_1" = "athlete_id",
+                               "team_abbreviation"))
+shots_2022 <- left_join(shots_2022, player_key_2022,
+                        by = c("athlete_id_1" = "athlete_id",
+                               "team_abbreviation"))
+shots_2021 <- left_join(shots_2021, player_key_2021,
+                        by = c("athlete_id_1" = "athlete_id",
+                               "team_abbreviation"))
+shots_2020 <- left_join(shots_2020, player_key_2020,
+                        by = c("athlete_id_1" = "athlete_id",
+                               "team_abbreviation"))
+shots_2019 <- left_join(shots_2019, player_key_2019,
+                        by = c("athlete_id_1" = "athlete_id",
+                               "team_abbreviation"))
+shots_2018 <- left_join(shots_2018, player_key_2018,
+                        by = c("athlete_id_1" = "athlete_id",
+                               "team_abbreviation"))
+shots_2017 <- left_join(shots_2017, player_key_2017,
+                        by = c("athlete_id_1" = "athlete_id",
+                               "team_abbreviation"))
+shots_2016 <- left_join(shots_2016, player_key_2016,
+                        by = c("athlete_id_1" = "athlete_id",
+                               "team_abbreviation"))
+shots_2015 <- left_join(shots_2015, player_key_2015,
+                        by = c("athlete_id_1" = "athlete_id",
+                               "team_abbreviation"))
+```
+
+# 2025 NBA Analysis
+
+Play-by-play data was gathered for the 2024-25 NBA season. Below is a heatmap of the location of all shots taken in that season by all players. Even without plotting the location of the hoop and 3-point line, you can see exactly where those are located. Most shots occur at the rim, while the next most popular shot is right at the 3-point line.
+
+```{r, echo = FALSE}
+shots_2025 <- shots_2025 |>
+  filter(coordinate_y_raw < 47)
+
+ggplot(shots_2025, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  geom_bin2d(bins = 50) +
+  labs(
+    title = "Heatmap of Shot Location 2025",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Count"
+  ) +
+  scale_fill_gradient2(low = "darkblue", mid = "red", high = "yellow",
+                       midpoint = 4500) +
+  theme(legend.position = "none")
+```
+
+\break
+
+```{r, echo = FALSE}
+shots_2025$shot_made <- as.factor(shots_2025$shot_made)
+shots_2025$coordinate_x_raw <- as.numeric(shots_2025$coordinate_x_raw)
+shots_2025$coordinate_x_raw <- as.numeric(shots_2025$coordinate_x_raw)
+set.seed(123)
+ind <- sample(2, nrow(shots_2025), replace = T, prob = c(0.7, 0.3))
+train <- shots_2025[ind == "1", ]
+test <- shots_2025[ind == "2", ]
+
+#Training set
+Training <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = train) 
+
+train_label <- train$shot_made
+
+train_matrix <- xgb.DMatrix(data = as.matrix(Training),
+                            label = as.numeric(train_label) - 1)
+
+#Testing set
+Testing <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = test)
+
+test_label <- test$shot_made
+
+test_matrix <- xgb.DMatrix(data = as.matrix(Testing),
+                           label = as.numeric(test_label) - 1)
+
+#set watchlist
+watchlist <- list(train = train_matrix, test = test_matrix)
+```
+
+```{r, echo=FALSE}
+###cross-validate###
+shot.xgb <- xgb.train(data = train_matrix,
+                    eta=0.01,
+                    max.depth=2,
+                    nrounds=1000,
+                   watchlist = watchlist,
+                   nthread=4,
+                   objective="binary:logistic",
+                   verbose=FALSE,
+                   eval_metric="auc")
+```
+
+```{r, include = FALSE}
+#error plot
+e <- data.frame(shot.xgb$evaluation_log)
+
+e_long <- e %>%
+  tidyr::pivot_longer(
+    cols = c(train_auc, test_auc),
+    names_to = "dataset",
+    values_to = "AUC"
+  )
+
+# Create ggplot
+ggplot(e_long, aes(x = iter, y = AUC, color = dataset)) +
+  geom_line(linewidth = 1) +
+  labs(
+    title = "Training vs Test AUC by Iteration",
+    x = "Iteration",
+    y = "AUC",
+    color = "Dataset"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+```
+
+```{r, echo = FALSE}
+pred.stats <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = shots_2025)
+
+pred_label <- shots_2025$shot_made
+
+pred_matrix <- xgb.DMatrix(data = as.matrix(pred.stats),
+                           label = as.numeric(pred_label) - 1)
+
+shots_2025$xgb_prob <- predict(shot.xgb, pred_matrix)
+```
+
+Using only the x and y coordinates of each shot taken, ignoring who the shooter is, I estimated the probability of a shot being successful. The heatmap below shows that as shot distance increases, accuracy goes down. There seems to be hot spots in the center of the court and along the baseline. 
+
+```{r, echo = FALSE}
+ggplot(shots_2025, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = xgb_prob), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Predicted Shot Success Probabilities 2025",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Success"
+  ) +
+  theme_minimal()
+```
+
+\break
+
+```{r, echo = FALSE}
+shots_2025$adj_val <- shots_2025$shot_val * shots_2025$xgb_prob
+```
+
+Now, I will multiply the shot success probabilities by the points awarded if the shot is made. In other words, I am assigning a value to each spot on the floor based on how many points the shot is worth and how easy the shot is to make. Clearly, a 3-point shot immediately behind the line is more valuable than a 2-point shot with a foot on the 3-point line. These shots are virtually the same distance, but one is worth an extra point. Again, without knowing where the 3-point line or the hoop are on the court, you can easily find them using the plot below.
+
+```{r, echo = FALSE}
+ggplot(shots_2025, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = adj_val), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Shot Value 2025",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Value"
+  ) +
+  theme_minimal()
+```
+
+\break
+
+```{r, echo = FALSE}
+shots_2025$val_added <- shots_2025$score_value - shots_2025$adj_val
+
+team_value_off_2025 <- shots_2025 |>
+  group_by(team_abbreviation) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+
+team_value_def_2025 <- shots_2025 |>
+  group_by(Defender) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+```
+
+Next, we can assess each team's shot quality and shot making skills on average. Teams on the right shoot higher quality shots, while teams on the left shoot lower value shots. Higher teams have better shot making ability, while lower teams are worse at making shots. It is clear that some combination of these 2 is needed to best succeed, but shooting higher quality shots makes it harder to build shot making value, as shown by the general downward trend from left to right.
+
+```{r, echo = FALSE}
+ggplot(team_value_off_2025, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = team_abbreviation), width = 0.05) +
+  labs(title = "Comparing Shot Quality to Shooting Ability per Shot Taken 2025",
+       x = "Average Shot Quality", y = "Average Value Gained per Shot Taken")
+```
+
+\break
+
+Now we can use the same principles to assess defensive prowess. The following plot visualizes each team's ability to suppress shot quality and hinder shot making. Teams on the right allow high quality looks; teams on the left prevent them. Teams at the top allow shots to be made at high rates; teams at the bottom force misses. Again, some combination of these 2 abilities is needed perform best.
+
+```{r, echo = FALSE}
+ggplot(team_value_def_2025, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = Defender), width = 0.05) +
+  labs(title = "Comparing Defensive Shot Quality to Shooting Defense per Shot Taken 2025",
+       x = "Average Opponent Shot Quality",
+       y = "Average Value Gained per Opponent Shot Taken")
+```
+
+\break
+
+Much like "Net Rating" we can combine the shot making and make-preventing skills of teams into a "Net Value." For this plot, we are not looking at shot quality or shot quality allowed, only the ability to make shots and prevent opponents from making shots. The plot below visualizes each teams offensive and defensive prowess as well as the net combination of them. For the sake of space and readability, I am only showing the top 10 net value teams. Eight of these ten teams were playoff teams. The second and fourth best teams made the finals, with the second best team winning. A very interesting case is the Suns. They led the league in offensive shot making value, but also were 3rd worst in the league in defensive shot stopping value. 
+
+```{r, echo = FALSE}
+Net_Value_2025 <- data.frame(cbind(team_value_off_2025$team_abbreviation,
+                   team_value_off_2025$shooting_value_av,
+                   team_value_def_2025$shooting_value_av))
+
+colnames(Net_Value_2025) <- c("Team", "Off_Val", "Def_Val")
+
+Net_Value_2025$Off_Val <- round(as.numeric(Net_Value_2025$Off_Val), 3)
+Net_Value_2025$Def_Val <- round(as.numeric(Net_Value_2025$Def_Val), 3)
+
+Net_Value_2025$Def_Val <- Net_Value_2025$Def_Val * -1
+
+Net_Value_2025$Net <- Net_Value_2025$Off_Val + Net_Value_2025$Def_Val
+
+plot_data <- Net_Value_2025 |>
+  arrange(desc(Net)) |>     
+  slice_head(n = 10) |>          
+  select(Team, Off_Val, Def_Val, Net) |>
+  pivot_longer(cols = c(Off_Val, Def_Val, Net),
+               names_to = "Measure",
+               values_to = "Value")
+
+plot_data$Measure <- factor(plot_data$Measure, 
+                            levels = c("Net", "Off_Val",
+                                       "Def_Val"))
+
+ggplot(plot_data, aes(x = reorder(Team, Value), 
+                      y = Value, 
+                      fill = Measure)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Off_Val" = "steelblue",
+               "Def_Val" = "darkorange",
+               "Net"     = "forestgreen") 
+  ) +
+  labs(
+    title = "Top 10 Teams by Net Value (2025)",
+    x = "Team",
+    y = "Value",
+    fill = "Measure"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "top"
+  )
+```
+
+\break
+
+Finally, we can evaluate players. We can take the same approach that we took for each team and apply it to players. Simply total their value added for each shot taken for the whole season. This measure tells us how valuable the player was at making shots for the whole season. Using a cumulative stat is great for estimating player value because it penalizes players who missed games or didn't shoot often. The top 10 players are plotted below. Jokic held a clear lead in shot making ability for the overall season.
+
+```{r, echo = FALSE}
+player_value_2025 <- shots_2025 |>
+  group_by(athlete_display_name) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots) |>
+  arrange(desc(shooting_value)) |>
+  filter(shots >= 200) |>
+  mutate(season = 2025)
+
+player_value_10 <- player_value_2025 |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value),
+                            y = shooting_value)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Season Shooting Value",
+       title = "NBA Player Shooting Value 2025") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+\break
+
+Next, we'll look at average shooting value (players with at least 200 FGA). Here, you may see some names you didn't expect. These players are great shot makers, but may not be given the freedom to shoot as often as "superstars." However, Kevin Durant tops the list despite his green light. Nikola Jokic also makes the top 10 in average value. This chart says a lot about Durant and Jokic having the ability to make shots at a high rate and keep it up for an entire season.
+
+```{r, echo = FALSE}
+player_value_10 <- player_value_2025 |>
+  arrange(desc(shooting_value_av)) |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value_av),
+                            y = shooting_value_av)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Shooting Value Average",
+       title = "NBA Player Average Shooting Value 2025") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+\break
+
+Next, we'll look at average shot quality (players with at least 200 FGA). There may not be much to glean from the plot below because the leaders seem to be big men who primarily shoot at the rim. 
+
+```{r, echo = FALSE}
+player_value_10 <- player_value_2025 |>
+  arrange(desc(shot_value_av)) |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shot_value_av),
+                            y = shot_value_av)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Shot Value Average",
+       title = "NBA Player Average Shot Quality 2025") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+\break
+
+# 2024 NBA Analysis
+
+```{r, echo = FALSE}
+shots_2024 <- shots_2024 |>
+  filter(coordinate_y_raw < 47)
+
+ggplot(shots_2024, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  geom_bin2d(bins = 50) +
+  labs(
+    title = "Heatmap of Shot Location 2024",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Count"
+  ) +
+  scale_fill_gradient2(low = "darkblue", mid = "red", high = "yellow",
+                       midpoint = 4500) +
+  theme(legend.position = "none")
+```
+
+```{r, echo = FALSE}
+shots_2024$shot_made <- as.factor(shots_2024$shot_made)
+shots_2024$coordinate_x_raw <- as.numeric(shots_2024$coordinate_x_raw)
+shots_2024$coordinate_x_raw <- as.numeric(shots_2024$coordinate_x_raw)
+set.seed(123)
+ind <- sample(2, nrow(shots_2024), replace = T, prob = c(0.7, 0.3))
+train <- shots_2024[ind == "1", ]
+test <- shots_2024[ind == "2", ]
+
+#Training set
+Training <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = train) 
+
+train_label <- train$shot_made
+
+train_matrix <- xgb.DMatrix(data = as.matrix(Training),
+                            label = as.numeric(train_label) - 1)
+
+#Testing set
+Testing <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = test)
+
+test_label <- test$shot_made
+
+test_matrix <- xgb.DMatrix(data = as.matrix(Testing),
+                           label = as.numeric(test_label) - 1)
+
+#set watchlist
+watchlist <- list(train = train_matrix, test = test_matrix)
+```
+
+```{r, echo=FALSE}
+###cross-validate###
+shot.xgb <- xgb.train(data = train_matrix,
+                    eta=0.01,
+                    max.depth=2,
+                    nrounds=1000,
+                   watchlist = watchlist,
+                   nthread=4,
+                   objective="binary:logistic",
+                   verbose=FALSE,
+                   eval_metric="auc")
+```
+
+```{r, include = FALSE}
+#error plot
+e <- data.frame(shot.xgb$evaluation_log)
+
+e_long <- e %>%
+  tidyr::pivot_longer(
+    cols = c(train_auc, test_auc),
+    names_to = "dataset",
+    values_to = "AUC"
+  )
+
+ggplot(e_long, aes(x = iter, y = AUC, color = dataset)) +
+  geom_line(linewidth = 1) +
+  labs(
+    title = "Training vs Test AUC by Iteration",
+    x = "Iteration",
+    y = "AUC",
+    color = "Dataset"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+```
+
+```{r, echo = FALSE}
+pred.stats <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = shots_2024)
+
+pred_label <- shots_2024$shot_made
+
+pred_matrix <- xgb.DMatrix(data = as.matrix(pred.stats),
+                           label = as.numeric(pred_label) - 1)
+
+shots_2024$xgb_prob <- predict(shot.xgb, pred_matrix)
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2024, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = xgb_prob), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Predicted Shot Success Probabilities 2024",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Success"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2024$adj_val <- shots_2024$shot_val * shots_2024$xgb_prob
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2024, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = adj_val), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Shot Value 2024",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Value"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2024$val_added <- shots_2024$score_value - shots_2024$adj_val
+
+team_value_off_2024 <- shots_2024 |>
+  group_by(team_abbreviation) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+
+team_value_def_2024 <- shots_2024 |>
+  group_by(Defender) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+```
+
+
+```{r, echo = FALSE}
+ggplot(team_value_off_2024, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = team_abbreviation), width = 0.05) +
+  labs(title = "Comparing Shot Quality to Shooting Ability per Shot Taken 2024",
+       x = "Average Shot Quality", y = "Average Value Gained per Shot Taken")
+```
+
+```{r, echo = FALSE}
+ggplot(team_value_def_2024, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = Defender), width = 0.05) +
+  labs(title = "Comparing Defensive Shot Quality to Shooting Defense per Shot Taken 2024",
+       x = "Average Opponent Shot Quality",
+       y = "Average Value Gained per Opponent Shot Taken")
+```
+
+```{r, echo = FALSE}
+Net_Value_2024 <- data.frame(cbind(team_value_off_2024$team_abbreviation,
+                   team_value_off_2024$shooting_value_av,
+                   team_value_def_2024$shooting_value_av))
+
+colnames(Net_Value_2024) <- c("Team", "Off_Val", "Def_Val")
+
+Net_Value_2024$Off_Val <- round(as.numeric(Net_Value_2024$Off_Val), 3)
+Net_Value_2024$Def_Val <- round(as.numeric(Net_Value_2024$Def_Val), 3)
+
+Net_Value_2024$Def_Val <- Net_Value_2024$Def_Val * -1
+
+Net_Value_2024$Net <- Net_Value_2024$Off_Val + Net_Value_2024$Def_Val
+
+plot_data <- Net_Value_2024 |>
+  arrange(desc(Net)) |>     
+  slice_head(n = 10) |>          
+  select(Team, Off_Val, Def_Val, Net) |>
+  pivot_longer(cols = c(Off_Val, Def_Val, Net),
+               names_to = "Measure",
+               values_to = "Value")
+
+plot_data$Measure <- factor(plot_data$Measure, 
+                            levels = c("Net", "Off_Val",
+                                       "Def_Val"))
+
+ggplot(plot_data, aes(x = reorder(Team, Value), 
+                      y = Value, 
+                      fill = Measure)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Off_Val" = "steelblue",
+               "Def_Val" = "darkorange",
+               "Net"     = "forestgreen") 
+  ) +
+  labs(
+    title = "Top 10 Teams by Net Value (2024)",
+    x = "Team",
+    y = "Value",
+    fill = "Measure"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "top"
+  )
+```
+
+```{r, echo = FALSE}
+player_value_2024 <- shots_2024 |>
+  group_by(athlete_display_name) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots) |>
+  arrange(desc(shooting_value)) |>
+  filter(shots >= 200) |>
+  mutate(season = 2024)
+
+player_value_10 <- player_value_2024 |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value),
+                            y = shooting_value)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Season Shooting Value",
+       title = "NBA Player Shooting Value 2024") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r, echo = FALSE}
+player_value_10 <- player_value_2024 |>
+  arrange(desc(shooting_value_av)) |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value_av),
+                            y = shooting_value_av)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Shooting Value Average",
+       title = "NBA Player Average Shooting Value 2024") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+\break
+
+# 2023 NBA Analysis
+
+```{r, echo = FALSE}
+shots_2023 <- shots_2023 |>
+  filter(coordinate_y_raw < 47)
+
+ggplot(shots_2023, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  geom_bin2d(bins = 50) +
+  labs(
+    title = "Heatmap of Shot Location 2023",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Count"
+  ) +
+  scale_fill_gradient2(low = "darkblue", mid = "red", high = "yellow",
+                       midpoint = 4500) +
+  theme(legend.position = "none")
+```
+
+```{r, echo = FALSE}
+shots_2023$shot_made <- as.factor(shots_2023$shot_made)
+shots_2023$coordinate_x_raw <- as.numeric(shots_2023$coordinate_x_raw)
+shots_2023$coordinate_x_raw <- as.numeric(shots_2023$coordinate_x_raw)
+set.seed(123)
+ind <- sample(2, nrow(shots_2023), replace = T, prob = c(0.7, 0.3))
+train <- shots_2023[ind == "1", ]
+test <- shots_2023[ind == "2", ]
+
+#Training set
+Training <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = train) 
+
+train_label <- train$shot_made
+
+train_matrix <- xgb.DMatrix(data = as.matrix(Training),
+                            label = as.numeric(train_label) - 1)
+
+#Testing set
+Testing <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = test)
+
+test_label <- test$shot_made
+
+test_matrix <- xgb.DMatrix(data = as.matrix(Testing),
+                           label = as.numeric(test_label) - 1)
+
+#set watchlist
+watchlist <- list(train = train_matrix, test = test_matrix)
+```
+
+```{r, echo=FALSE}
+###cross-validate###
+shot.xgb <- xgb.train(data = train_matrix,
+                    eta=0.01,
+                    max.depth=2,
+                    nrounds=1000,
+                   watchlist = watchlist,
+                   nthread=4,
+                   objective="binary:logistic",
+                   verbose=FALSE,
+                   eval_metric="auc")
+```
+
+```{r, include = FALSE}
+#error plot
+e <- data.frame(shot.xgb$evaluation_log)
+
+e_long <- e %>%
+  tidyr::pivot_longer(
+    cols = c(train_auc, test_auc),
+    names_to = "dataset",
+    values_to = "AUC"
+  )
+
+# Create ggplot
+ggplot(e_long, aes(x = iter, y = AUC, color = dataset)) +
+  geom_line(linewidth = 1) +
+  labs(
+    title = "Training vs Test AUC by Iteration",
+    x = "Iteration",
+    y = "AUC",
+    color = "Dataset"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+```
+
+```{r, echo = FALSE}
+pred.stats <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = shots_2023)
+
+pred_label <- shots_2023$shot_made
+
+pred_matrix <- xgb.DMatrix(data = as.matrix(pred.stats),
+                           label = as.numeric(pred_label) - 1)
+
+shots_2023$xgb_prob <- predict(shot.xgb, pred_matrix)
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2023, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = xgb_prob), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Predicted Shot Success Probabilities 2023",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Success"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2023$adj_val <- shots_2023$shot_val * shots_2023$xgb_prob
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2023, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = adj_val), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Shot Value 2023",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Value"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2023$val_added <- shots_2023$score_value - shots_2023$adj_val
+
+team_value_off_2023 <- shots_2023 |>
+  group_by(team_abbreviation) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+
+team_value_def_2023 <- shots_2023 |>
+  group_by(Defender) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+```
+
+
+```{r, echo = FALSE}
+ggplot(team_value_off_2023, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = team_abbreviation), width = 0.05) +
+  labs(title = "Comparing Shot Quality to Shooting Ability per Shot Taken 2023",
+       x = "Average Shot Quality", y = "Average Value Gained per Shot Taken")
+```
+
+```{r, echo = FALSE}
+ggplot(team_value_def_2023, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = Defender), width = 0.05) +
+  labs(title = "Comparing Defensive Shot Quality to Shooting Defense per Shot Taken 2023",
+       x = "Average Opponent Shot Quality",
+       y = "Average Value Gained per Opponent Shot Taken")
+```
+
+```{r, echo = FALSE}
+Net_Value_2023 <- data.frame(cbind(team_value_off_2023$team_abbreviation,
+                   team_value_off_2023$shooting_value_av,
+                   team_value_def_2023$shooting_value_av))
+
+colnames(Net_Value_2023) <- c("Team", "Off_Val", "Def_Val")
+
+Net_Value_2023$Off_Val <- round(as.numeric(Net_Value_2023$Off_Val), 3)
+Net_Value_2023$Def_Val <- round(as.numeric(Net_Value_2023$Def_Val), 3)
+
+Net_Value_2023$Def_Val <- Net_Value_2023$Def_Val * -1
+
+Net_Value_2023$Net <- Net_Value_2023$Off_Val + Net_Value_2023$Def_Val
+
+plot_data <- Net_Value_2023 |>
+  arrange(desc(Net)) |>     
+  slice_head(n = 10) |>          
+  select(Team, Off_Val, Def_Val, Net) |>
+  pivot_longer(cols = c(Off_Val, Def_Val, Net),
+               names_to = "Measure",
+               values_to = "Value")
+
+plot_data$Measure <- factor(plot_data$Measure, 
+                            levels = c("Net", "Off_Val",
+                                       "Def_Val"))
+
+ggplot(plot_data, aes(x = reorder(Team, Value), 
+                      y = Value, 
+                      fill = Measure)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Off_Val" = "steelblue",
+               "Def_Val" = "darkorange",
+               "Net"     = "forestgreen") 
+  ) +
+  labs(
+    title = "Top 10 Teams by Net Value (2023)",
+    x = "Team",
+    y = "Value",
+    fill = "Measure"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "top"
+  )
+```
+
+```{r, echo = FALSE}
+player_value_2023 <- shots_2023 |>
+  group_by(athlete_display_name) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots) |>
+  arrange(desc(shooting_value)) |>
+  filter(shots >= 200) |>
+  mutate(season = 2023)
+
+player_value_10 <- player_value_2023 |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value),
+                            y = shooting_value)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Season Shooting Value",
+       title = "NBA Player Shooting Value 2023") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r, echo = FALSE}
+player_value_10 <- player_value_2023 |>
+  arrange(desc(shooting_value_av)) |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value_av),
+                            y = shooting_value_av)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Shooting Value Average",
+       title = "NBA Player Average Shooting Value 2023") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+\break
+
+# 2022 NBA Analysis
+
+```{r, echo = FALSE}
+shots_2022 <- shots_2022 |>
+  filter(coordinate_y_raw < 47)
+
+ggplot(shots_2022, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  geom_bin2d(bins = 50) +
+  labs(
+    title = "Heatmap of Shot Location 2022",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Count"
+  ) +
+  scale_fill_gradient2(low = "darkblue", mid = "red", high = "yellow",
+                       midpoint = 4000) +
+  theme(legend.position = "none")
+```
+
+```{r, echo = FALSE}
+shots_2022$shot_made <- as.factor(shots_2022$shot_made)
+shots_2022$coordinate_x_raw <- as.numeric(shots_2022$coordinate_x_raw)
+shots_2022$coordinate_x_raw <- as.numeric(shots_2022$coordinate_x_raw)
+set.seed(123)
+ind <- sample(2, nrow(shots_2022), replace = T, prob = c(0.7, 0.3))
+train <- shots_2022[ind == "1", ]
+test <- shots_2022[ind == "2", ]
+
+#Training set
+Training <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = train) 
+
+train_label <- train$shot_made
+
+train_matrix <- xgb.DMatrix(data = as.matrix(Training),
+                            label = as.numeric(train_label) - 1)
+
+#Testing set
+Testing <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = test)
+
+test_label <- test$shot_made
+
+test_matrix <- xgb.DMatrix(data = as.matrix(Testing),
+                           label = as.numeric(test_label) - 1)
+
+#set watchlist
+watchlist <- list(train = train_matrix, test = test_matrix)
+```
+
+```{r, echo=FALSE}
+###cross-validate###
+shot.xgb <- xgb.train(data = train_matrix,
+                    eta=0.01,
+                    max.depth=2,
+                    nrounds=1000,
+                   watchlist = watchlist,
+                   nthread=4,
+                   objective="binary:logistic",
+                   verbose=FALSE,
+                   eval_metric="auc")
+```
+
+```{r, include = FALSE}
+#error plot
+e <- data.frame(shot.xgb$evaluation_log)
+
+e_long <- e %>%
+  tidyr::pivot_longer(
+    cols = c(train_auc, test_auc),
+    names_to = "dataset",
+    values_to = "AUC"
+  )
+
+# Create ggplot
+ggplot(e_long, aes(x = iter, y = AUC, color = dataset)) +
+  geom_line(linewidth = 1) +
+  labs(
+    title = "Training vs Test AUC by Iteration",
+    x = "Iteration",
+    y = "AUC",
+    color = "Dataset"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+```
+
+```{r, echo = FALSE}
+pred.stats <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = shots_2022)
+
+pred_label <- shots_2022$shot_made
+
+pred_matrix <- xgb.DMatrix(data = as.matrix(pred.stats),
+                           label = as.numeric(pred_label) - 1)
+
+shots_2022$xgb_prob <- predict(shot.xgb, pred_matrix)
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2022, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = xgb_prob), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Predicted Shot Success Probabilities 2022",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Success"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2022$adj_val <- shots_2022$shot_val * shots_2022$xgb_prob
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2022, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = adj_val), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Shot Value 2022",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Value"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2022$val_added <- shots_2022$score_value - shots_2022$adj_val
+
+team_value_off_2022 <- shots_2022 |>
+  group_by(team_abbreviation) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+
+team_value_def_2022 <- shots_2022 |>
+  group_by(Defender) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+```
+
+
+```{r, echo = FALSE}
+ggplot(team_value_off_2022, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = team_abbreviation), width = 0.05) +
+  labs(title = "Comparing Shot Quality to Shooting Ability per Shot Taken 2022",
+       x = "Average Shot Quality", y = "Average Value Gained per Shot Taken")
+```
+
+```{r, echo = FALSE}
+ggplot(team_value_def_2022, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = Defender), width = 0.05) +
+  labs(title = "Comparing Defensive Shot Quality to Shooting Defense per Shot Taken 2022",
+       x = "Average Opponent Shot Quality",
+       y = "Average Value Gained per Opponent Shot Taken")
+```
+
+```{r, echo = FALSE}
+Net_Value_2022 <- data.frame(cbind(team_value_off_2022$team_abbreviation,
+                   team_value_off_2022$shooting_value_av,
+                   team_value_def_2022$shooting_value_av))
+
+colnames(Net_Value_2022) <- c("Team", "Off_Val", "Def_Val")
+
+Net_Value_2022$Off_Val <- round(as.numeric(Net_Value_2022$Off_Val), 3)
+Net_Value_2022$Def_Val <- round(as.numeric(Net_Value_2022$Def_Val), 3)
+
+Net_Value_2022$Def_Val <- Net_Value_2022$Def_Val * -1
+
+Net_Value_2022$Net <- Net_Value_2022$Off_Val + Net_Value_2022$Def_Val
+
+plot_data <- Net_Value_2022 |>
+  arrange(desc(Net)) |>     
+  slice_head(n = 10) |>          
+  select(Team, Off_Val, Def_Val, Net) |>
+  pivot_longer(cols = c(Off_Val, Def_Val, Net),
+               names_to = "Measure",
+               values_to = "Value")
+
+plot_data$Measure <- factor(plot_data$Measure, 
+                            levels = c("Net", "Off_Val",
+                                       "Def_Val"))
+
+ggplot(plot_data, aes(x = reorder(Team, Value), 
+                      y = Value, 
+                      fill = Measure)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Off_Val" = "steelblue",
+               "Def_Val" = "darkorange",
+               "Net"     = "forestgreen") 
+  ) +
+  labs(
+    title = "Top 10 Teams by Net Value (2022)",
+    x = "Team",
+    y = "Value",
+    fill = "Measure"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "top"
+  )
+```
+
+```{r, echo = FALSE}
+player_value_2022 <- shots_2022 |>
+  group_by(athlete_display_name) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots) |>
+  arrange(desc(shooting_value)) |>
+  filter(shots >= 200) |>
+  mutate(season = 2022)
+
+player_value_10 <- player_value_2022 |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value),
+                            y = shooting_value)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Season Shooting Value",
+       title = "NBA Player Shooting Value 2022") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r, echo = FALSE}
+player_value_10 <- player_value_2022 |>
+  arrange(desc(shooting_value_av)) |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value_av),
+                            y = shooting_value_av)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Shooting Value Average",
+       title = "NBA Player Average Shooting Value 2022") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+\break
+
+# 2021 NBA Analysis
+
+```{r, echo = FALSE}
+shots_2021 <- shots_2021 |>
+  filter(coordinate_y_raw < 47)
+
+ggplot(shots_2021, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  geom_bin2d(bins = 50) +
+  labs(
+    title = "Heatmap of Shot Location 2021",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Count"
+  ) +
+  scale_fill_gradient2(low = "darkblue", mid = "red", high = "yellow",
+                       midpoint = 4000) +
+  theme(legend.position = "none")
+```
+
+```{r, echo = FALSE}
+shots_2021$shot_made <- as.factor(shots_2021$shot_made)
+shots_2021$coordinate_x_raw <- as.numeric(shots_2021$coordinate_x_raw)
+shots_2021$coordinate_x_raw <- as.numeric(shots_2021$coordinate_x_raw)
+set.seed(123)
+ind <- sample(2, nrow(shots_2021), replace = T, prob = c(0.7, 0.3))
+train <- shots_2021[ind == "1", ]
+test <- shots_2021[ind == "2", ]
+
+#Training set
+Training <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = train) 
+
+train_label <- train$shot_made
+
+train_matrix <- xgb.DMatrix(data = as.matrix(Training),
+                            label = as.numeric(train_label) - 1)
+
+#Testing set
+Testing <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = test)
+
+test_label <- test$shot_made
+
+test_matrix <- xgb.DMatrix(data = as.matrix(Testing),
+                           label = as.numeric(test_label) - 1)
+
+#set watchlist
+watchlist <- list(train = train_matrix, test = test_matrix)
+```
+
+```{r, echo=FALSE}
+###cross-validate###
+shot.xgb <- xgb.train(data = train_matrix,
+                    eta=0.01,
+                    max.depth=2,
+                    nrounds=1000,
+                   watchlist = watchlist,
+                   nthread=4,
+                   objective="binary:logistic",
+                   verbose=FALSE,
+                   eval_metric="auc")
+```
+
+```{r, include = FALSE}
+#error plot
+e <- data.frame(shot.xgb$evaluation_log)
+
+e_long <- e %>%
+  tidyr::pivot_longer(
+    cols = c(train_auc, test_auc),
+    names_to = "dataset",
+    values_to = "AUC"
+  )
+
+# Create ggplot
+ggplot(e_long, aes(x = iter, y = AUC, color = dataset)) +
+  geom_line(linewidth = 1) +
+  labs(
+    title = "Training vs Test AUC by Iteration",
+    x = "Iteration",
+    y = "AUC",
+    color = "Dataset"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+```
+
+```{r, echo = FALSE}
+pred.stats <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = shots_2021)
+
+pred_label <- shots_2021$shot_made
+
+pred_matrix <- xgb.DMatrix(data = as.matrix(pred.stats),
+                           label = as.numeric(pred_label) - 1)
+
+shots_2021$xgb_prob <- predict(shot.xgb, pred_matrix)
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2021, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = xgb_prob), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Predicted Shot Success Probabilities 2021",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Success"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2021$adj_val <- shots_2021$shot_val * shots_2021$xgb_prob
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2021, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = adj_val), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Shot Value 2021",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Value"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2021$val_added <- shots_2021$score_value - shots_2021$adj_val
+
+team_value_off_2021 <- shots_2021 |>
+  group_by(team_abbreviation) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+
+team_value_def_2021 <- shots_2021 |>
+  group_by(Defender) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+```
+
+
+```{r, echo = FALSE}
+ggplot(team_value_off_2021, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = team_abbreviation), width = 0.05) +
+  labs(title = "Comparing Shot Quality to Shooting Ability per Shot Taken 2021",
+       x = "Average Shot Quality", y = "Average Value Gained per Shot Taken")
+```
+
+```{r, echo = FALSE}
+ggplot(team_value_def_2021, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = Defender), width = 0.05) +
+  labs(title = "Comparing Defensive Shot Quality to Shooting Defense per Shot Taken 2021",
+       x = "Average Opponent Shot Quality",
+       y = "Average Value Gained per Opponent Shot Taken")
+```
+
+```{r, echo = FALSE}
+Net_Value_2021 <- data.frame(cbind(team_value_off_2021$team_abbreviation,
+                   team_value_off_2021$shooting_value_av,
+                   team_value_def_2021$shooting_value_av))
+
+colnames(Net_Value_2021) <- c("Team", "Off_Val", "Def_Val")
+
+Net_Value_2021$Off_Val <- round(as.numeric(Net_Value_2021$Off_Val), 3)
+Net_Value_2021$Def_Val <- round(as.numeric(Net_Value_2021$Def_Val), 3)
+
+Net_Value_2021$Def_Val <- Net_Value_2021$Def_Val * -1
+
+Net_Value_2021$Net <- Net_Value_2021$Off_Val + Net_Value_2021$Def_Val
+
+plot_data <- Net_Value_2021 |>
+  arrange(desc(Net)) |>     
+  slice_head(n = 10) |>          
+  select(Team, Off_Val, Def_Val, Net) |>
+  pivot_longer(cols = c(Off_Val, Def_Val, Net),
+               names_to = "Measure",
+               values_to = "Value")
+
+plot_data$Measure <- factor(plot_data$Measure, 
+                            levels = c("Net", "Off_Val",
+                                       "Def_Val"))
+
+ggplot(plot_data, aes(x = reorder(Team, Value), 
+                      y = Value, 
+                      fill = Measure)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Off_Val" = "steelblue",
+               "Def_Val" = "darkorange",
+               "Net"     = "forestgreen") 
+  ) +
+  labs(
+    title = "Top 10 Teams by Net Value (2021)",
+    x = "Team",
+    y = "Value",
+    fill = "Measure"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "top"
+  )
+```
+
+```{r, echo = FALSE}
+player_value_2021 <- shots_2021 |>
+  group_by(athlete_display_name) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots) |>
+  arrange(desc(shooting_value)) |>
+  filter(shots >= 200) |>
+  mutate(season = 2021)
+
+player_value_10 <- player_value_2021 |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value),
+                            y = shooting_value)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Season Shooting Value",
+       title = "NBA Player Shooting Value 2021") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r, echo = FALSE}
+player_value_10 <- player_value_2021 |>
+  arrange(desc(shooting_value_av)) |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value_av),
+                            y = shooting_value_av)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Shooting Value Average",
+       title = "NBA Player Average Shooting Value 2021") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+\break
+
+# 2020 NBA Analysis
+
+```{r, echo = FALSE}
+shots_2020 <- shots_2020 |>
+  filter(coordinate_y_raw < 47)
+
+ggplot(shots_2020, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  geom_bin2d(bins = 50) +
+  labs(
+    title = "Heatmap of Shot Location 2020",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Count"
+  ) +
+  scale_fill_gradient2(low = "darkblue", mid = "red", high = "yellow",
+                       midpoint = 4000) +
+  theme(legend.position = "none")
+```
+
+```{r, echo = FALSE}
+shots_2020$shot_made <- as.factor(shots_2020$shot_made)
+shots_2020$coordinate_x_raw <- as.numeric(shots_2020$coordinate_x_raw)
+shots_2020$coordinate_x_raw <- as.numeric(shots_2020$coordinate_x_raw)
+set.seed(123)
+ind <- sample(2, nrow(shots_2020), replace = T, prob = c(0.7, 0.3))
+train <- shots_2020[ind == "1", ]
+test <- shots_2020[ind == "2", ]
+
+#Training set
+Training <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = train) 
+
+train_label <- train$shot_made
+
+train_matrix <- xgb.DMatrix(data = as.matrix(Training),
+                            label = as.numeric(train_label) - 1)
+
+#Testing set
+Testing <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = test)
+
+test_label <- test$shot_made
+
+test_matrix <- xgb.DMatrix(data = as.matrix(Testing),
+                           label = as.numeric(test_label) - 1)
+
+#set watchlist
+watchlist <- list(train = train_matrix, test = test_matrix)
+```
+
+```{r, echo=FALSE}
+###cross-validate###
+shot.xgb <- xgb.train(data = train_matrix,
+                    eta=0.01,
+                    max.depth=2,
+                    nrounds=1000,
+                   watchlist = watchlist,
+                   nthread=4,
+                   objective="binary:logistic",
+                   verbose=FALSE,
+                   eval_metric="auc")
+```
+
+```{r, include = FALSE}
+#error plot
+e <- data.frame(shot.xgb$evaluation_log)
+
+e_long <- e %>%
+  tidyr::pivot_longer(
+    cols = c(train_auc, test_auc),
+    names_to = "dataset",
+    values_to = "AUC"
+  )
+
+# Create ggplot
+ggplot(e_long, aes(x = iter, y = AUC, color = dataset)) +
+  geom_line(linewidth = 1) +
+  labs(
+    title = "Training vs Test AUC by Iteration",
+    x = "Iteration",
+    y = "AUC",
+    color = "Dataset"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+```
+
+```{r, echo = FALSE}
+pred.stats <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = shots_2020)
+
+pred_label <- shots_2020$shot_made
+
+pred_matrix <- xgb.DMatrix(data = as.matrix(pred.stats),
+                           label = as.numeric(pred_label) - 1)
+
+shots_2020$xgb_prob <- predict(shot.xgb, pred_matrix)
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2020, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = xgb_prob), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Predicted Shot Success Probabilities 2020",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Success"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2020$adj_val <- shots_2020$shot_val * shots_2020$xgb_prob
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2020, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = adj_val), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Shot Value 2020",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Value"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2020$val_added <- shots_2020$score_value - shots_2020$adj_val
+
+team_value_off_2020 <- shots_2020 |>
+  group_by(team_abbreviation) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+
+team_value_def_2020 <- shots_2020 |>
+  group_by(Defender) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+```
+
+
+```{r, echo = FALSE}
+ggplot(team_value_off_2020, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = team_abbreviation), width = 0.05) +
+  labs(title = "Comparing Shot Quality to Shooting Ability per Shot Taken 2020",
+       x = "Average Shot Quality", y = "Average Value Gained per Shot Taken")
+```
+
+```{r, echo = FALSE}
+ggplot(team_value_def_2020, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = Defender), width = 0.05) +
+  labs(title = "Comparing Defensive Shot Quality to Shooting Defense per Shot Taken 2020",
+       x = "Average Opponent Shot Quality",
+       y = "Average Value Gained per Opponent Shot Taken")
+```
+
+```{r, echo = FALSE}
+Net_Value_2020 <- data.frame(cbind(team_value_off_2020$team_abbreviation,
+                   team_value_off_2020$shooting_value_av,
+                   team_value_def_2020$shooting_value_av))
+
+colnames(Net_Value_2020) <- c("Team", "Off_Val", "Def_Val")
+
+Net_Value_2020$Off_Val <- round(as.numeric(Net_Value_2020$Off_Val), 3)
+Net_Value_2020$Def_Val <- round(as.numeric(Net_Value_2020$Def_Val), 3)
+
+Net_Value_2020$Def_Val <- Net_Value_2020$Def_Val * -1
+
+Net_Value_2020$Net <- Net_Value_2020$Off_Val + Net_Value_2020$Def_Val
+
+plot_data <- Net_Value_2020 |>
+  arrange(desc(Net)) |>     
+  slice_head(n = 10) |>          
+  select(Team, Off_Val, Def_Val, Net) |>
+  pivot_longer(cols = c(Off_Val, Def_Val, Net),
+               names_to = "Measure",
+               values_to = "Value")
+
+plot_data$Measure <- factor(plot_data$Measure, 
+                            levels = c("Net", "Off_Val",
+                                       "Def_Val"))
+
+ggplot(plot_data, aes(x = reorder(Team, Value), 
+                      y = Value, 
+                      fill = Measure)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Off_Val" = "steelblue",
+               "Def_Val" = "darkorange",
+               "Net"     = "forestgreen") 
+  ) +
+  labs(
+    title = "Top 10 Teams by Net Value (2020)",
+    x = "Team",
+    y = "Value",
+    fill = "Measure"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "top"
+  )
+```
+
+```{r, echo = FALSE}
+player_value_2020 <- shots_2020 |>
+  group_by(athlete_display_name) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots) |>
+  arrange(desc(shooting_value)) |>
+  filter(shots >= 200) |>
+  mutate(season = 2020)
+
+player_value_10 <- player_value_2020 |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value),
+                            y = shooting_value)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Season Shooting Value",
+       title = "NBA Player Shooting Value 2020") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r, echo = FALSE}
+player_value_10 <- player_value_2020 |>
+  arrange(desc(shooting_value_av)) |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value_av),
+                            y = shooting_value_av)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Shooting Value Average",
+       title = "NBA Player Average Shooting Value 2020") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+\break
+
+# 2019 NBA Analysis
+
+```{r, echo = FALSE}
+shots_2019 <- shots_2019 |>
+  filter(coordinate_y_raw < 47)
+
+ggplot(shots_2019, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  geom_bin2d(bins = 50) +
+  labs(
+    title = "Heatmap of Shot Location 2019",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Count"
+  ) +
+  scale_fill_gradient2(low = "darkblue", mid = "red", high = "yellow",
+                       midpoint = 4500) +
+  theme(legend.position = "none")
+```
+
+```{r, echo = FALSE}
+shots_2019$shot_made <- as.factor(shots_2019$shot_made)
+shots_2019$coordinate_x_raw <- as.numeric(shots_2019$coordinate_x_raw)
+shots_2019$coordinate_x_raw <- as.numeric(shots_2019$coordinate_x_raw)
+set.seed(123)
+ind <- sample(2, nrow(shots_2019), replace = T, prob = c(0.7, 0.3))
+train <- shots_2019[ind == "1", ]
+test <- shots_2019[ind == "2", ]
+
+#Training set
+Training <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = train) 
+
+train_label <- train$shot_made
+
+train_matrix <- xgb.DMatrix(data = as.matrix(Training),
+                            label = as.numeric(train_label) - 1)
+
+#Testing set
+Testing <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = test)
+
+test_label <- test$shot_made
+
+test_matrix <- xgb.DMatrix(data = as.matrix(Testing),
+                           label = as.numeric(test_label) - 1)
+
+#set watchlist
+watchlist <- list(train = train_matrix, test = test_matrix)
+```
+
+```{r, echo=FALSE}
+###cross-validate###
+shot.xgb <- xgb.train(data = train_matrix,
+                    eta=0.01,
+                    max.depth=2,
+                    nrounds=1000,
+                   watchlist = watchlist,
+                   nthread=4,
+                   objective="binary:logistic",
+                   verbose=FALSE,
+                   eval_metric="auc")
+```
+
+```{r, include = FALSE}
+#error plot
+e <- data.frame(shot.xgb$evaluation_log)
+
+e_long <- e %>%
+  tidyr::pivot_longer(
+    cols = c(train_auc, test_auc),
+    names_to = "dataset",
+    values_to = "AUC"
+  )
+
+# Create ggplot
+ggplot(e_long, aes(x = iter, y = AUC, color = dataset)) +
+  geom_line(linewidth = 1) +
+  labs(
+    title = "Training vs Test AUC by Iteration",
+    x = "Iteration",
+    y = "AUC",
+    color = "Dataset"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+```
+
+```{r, echo = FALSE}
+pred.stats <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = shots_2019)
+
+pred_label <- shots_2019$shot_made
+
+pred_matrix <- xgb.DMatrix(data = as.matrix(pred.stats),
+                           label = as.numeric(pred_label) - 1)
+
+shots_2019$xgb_prob <- predict(shot.xgb, pred_matrix)
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2019, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = xgb_prob), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Predicted Shot Success Probabilities 2019",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Success"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2019$adj_val <- shots_2019$shot_val * shots_2019$xgb_prob
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2019, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = adj_val), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Shot Value 2019",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Value"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2019$val_added <- shots_2019$score_value - shots_2019$adj_val
+
+team_value_off_2019 <- shots_2019 |>
+  group_by(team_abbreviation) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+
+team_value_def_2019 <- shots_2019 |>
+  group_by(Defender) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+```
+
+
+```{r, echo = FALSE}
+ggplot(team_value_off_2019, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = team_abbreviation), width = 0.05) +
+  labs(title = "Comparing Shot Quality to Shooting Ability per Shot Taken 2019",
+       x = "Average Shot Quality", y = "Average Value Gained per Shot Taken")
+```
+
+```{r, echo = FALSE}
+ggplot(team_value_def_2019, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = Defender), width = 0.05) +
+  labs(title = "Comparing Defensive Shot Quality to Shooting Defense per Shot Taken 2019",
+       x = "Average Opponent Shot Quality",
+       y = "Average Value Gained per Opponent Shot Taken")
+```
+
+```{r, echo = FALSE}
+Net_Value_2019 <- data.frame(cbind(team_value_off_2019$team_abbreviation,
+                   team_value_off_2019$shooting_value_av,
+                   team_value_def_2019$shooting_value_av))
+
+colnames(Net_Value_2019) <- c("Team", "Off_Val", "Def_Val")
+
+Net_Value_2019$Off_Val <- round(as.numeric(Net_Value_2019$Off_Val), 3)
+Net_Value_2019$Def_Val <- round(as.numeric(Net_Value_2019$Def_Val), 3)
+
+Net_Value_2019$Def_Val <- Net_Value_2019$Def_Val * -1
+
+Net_Value_2019$Net <- Net_Value_2019$Off_Val + Net_Value_2019$Def_Val
+
+plot_data <- Net_Value_2019 |>
+  arrange(desc(Net)) |>     
+  slice_head(n = 10) |>          
+  select(Team, Off_Val, Def_Val, Net) |>
+  pivot_longer(cols = c(Off_Val, Def_Val, Net),
+               names_to = "Measure",
+               values_to = "Value")
+
+plot_data$Measure <- factor(plot_data$Measure, 
+                            levels = c("Net", "Off_Val",
+                                       "Def_Val"))
+
+ggplot(plot_data, aes(x = reorder(Team, Value), 
+                      y = Value, 
+                      fill = Measure)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Off_Val" = "steelblue",
+               "Def_Val" = "darkorange",
+               "Net"     = "forestgreen") 
+  ) +
+  labs(
+    title = "Top 10 Teams by Net Value (2019)",
+    x = "Team",
+    y = "Value",
+    fill = "Measure"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "top"
+  )
+```
+
+```{r, echo = FALSE}
+player_value_2019 <- shots_2019 |>
+  group_by(athlete_display_name) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots) |>
+  arrange(desc(shooting_value)) |>
+  filter(shots >= 200) |>
+  mutate(season = 2019)
+
+player_value_10 <- player_value_2019 |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value),
+                            y = shooting_value)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Season Shooting Value",
+       title = "NBA Player Shooting Value 2019") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r, echo = FALSE}
+player_value_10 <- player_value_2019 |>
+  arrange(desc(shooting_value_av)) |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value_av),
+                            y = shooting_value_av)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Shooting Value Average",
+       title = "NBA Player Average Shooting Value 2019") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+\break
+
+# 2018 NBA Analysis
+
+```{r, echo = FALSE}
+shots_2018 <- shots_2018 |>
+  filter(coordinate_y_raw < 47 & coordinate_y_raw > -10)
+
+ggplot(shots_2018, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  geom_bin2d(bins = 50) +
+  labs(
+    title = "Heatmap of Shot Location 2018",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Count"
+  ) +
+  scale_fill_gradient2(low = "darkblue", mid = "red", high = "yellow",
+                       midpoint = 4500) +
+  theme(legend.position = "none")
+```
+
+```{r, echo = FALSE}
+shots_2018$shot_made <- as.factor(shots_2018$shot_made)
+shots_2018$coordinate_x_raw <- as.numeric(shots_2018$coordinate_x_raw)
+shots_2018$coordinate_x_raw <- as.numeric(shots_2018$coordinate_x_raw)
+set.seed(123)
+ind <- sample(2, nrow(shots_2018), replace = T, prob = c(0.7, 0.3))
+train <- shots_2018[ind == "1", ]
+test <- shots_2018[ind == "2", ]
+
+#Training set
+Training <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = train) 
+
+train_label <- train$shot_made
+
+train_matrix <- xgb.DMatrix(data = as.matrix(Training),
+                            label = as.numeric(train_label) - 1)
+
+#Testing set
+Testing <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = test)
+
+test_label <- test$shot_made
+
+test_matrix <- xgb.DMatrix(data = as.matrix(Testing),
+                           label = as.numeric(test_label) - 1)
+
+#set watchlist
+watchlist <- list(train = train_matrix, test = test_matrix)
+```
+
+```{r, echo=FALSE}
+###cross-validate###
+shot.xgb <- xgb.train(data = train_matrix,
+                    eta=0.01,
+                    max.depth=2,
+                    nrounds=1000,
+                   watchlist = watchlist,
+                   nthread=4,
+                   objective="binary:logistic",
+                   verbose=FALSE,
+                   eval_metric="auc")
+```
+
+```{r, include = FALSE}
+#error plot
+e <- data.frame(shot.xgb$evaluation_log)
+
+e_long <- e %>%
+  tidyr::pivot_longer(
+    cols = c(train_auc, test_auc),
+    names_to = "dataset",
+    values_to = "AUC"
+  )
+
+# Create ggplot
+ggplot(e_long, aes(x = iter, y = AUC, color = dataset)) +
+  geom_line(linewidth = 1) +
+  labs(
+    title = "Training vs Test AUC by Iteration",
+    x = "Iteration",
+    y = "AUC",
+    color = "Dataset"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+```
+
+```{r, echo = FALSE}
+pred.stats <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = shots_2018)
+
+pred_label <- shots_2018$shot_made
+
+pred_matrix <- xgb.DMatrix(data = as.matrix(pred.stats),
+                           label = as.numeric(pred_label) - 1)
+
+shots_2018$xgb_prob <- predict(shot.xgb, pred_matrix)
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2018, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = xgb_prob), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Predicted Shot Success Probabilities 2018",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Success"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2018$adj_val <- shots_2018$shot_val * shots_2018$xgb_prob
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2018, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = adj_val), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Shot Value 2018",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Value"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2018$val_added <- shots_2018$score_value - shots_2018$adj_val
+
+team_value_off_2018 <- shots_2018 |>
+  group_by(team_abbreviation) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+
+team_value_def_2018 <- shots_2018 |>
+  group_by(Defender) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+```
+
+
+```{r, echo = FALSE}
+ggplot(team_value_off_2018, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = team_abbreviation), width = 0.05) +
+  labs(title = "Comparing Shot Quality to Shooting Ability per Shot Taken 2018",
+       x = "Average Shot Quality", y = "Average Value Gained per Shot Taken")
+```
+
+```{r, echo = FALSE}
+ggplot(team_value_def_2018, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = Defender), width = 0.05) +
+  labs(title = "Comparing Defensive Shot Quality to Shooting Defense per Shot Taken 2018",
+       x = "Average Opponent Shot Quality",
+       y = "Average Value Gained per Opponent Shot Taken")
+```
+
+```{r, echo = FALSE}
+Net_Value_2018 <- data.frame(cbind(team_value_off_2018$team_abbreviation,
+                   team_value_off_2018$shooting_value_av,
+                   team_value_def_2018$shooting_value_av))
+
+colnames(Net_Value_2018) <- c("Team", "Off_Val", "Def_Val")
+
+Net_Value_2018$Off_Val <- round(as.numeric(Net_Value_2018$Off_Val), 3)
+Net_Value_2018$Def_Val <- round(as.numeric(Net_Value_2018$Def_Val), 3)
+
+Net_Value_2018$Def_Val <- Net_Value_2018$Def_Val * -1
+
+Net_Value_2018$Net <- Net_Value_2018$Off_Val + Net_Value_2018$Def_Val
+
+plot_data <- Net_Value_2018 |>
+  arrange(desc(Net)) |>     
+  slice_head(n = 10) |>          
+  select(Team, Off_Val, Def_Val, Net) |>
+  pivot_longer(cols = c(Off_Val, Def_Val, Net),
+               names_to = "Measure",
+               values_to = "Value")
+
+plot_data$Measure <- factor(plot_data$Measure, 
+                            levels = c("Net", "Off_Val",
+                                       "Def_Val"))
+
+ggplot(plot_data, aes(x = reorder(Team, Value), 
+                      y = Value, 
+                      fill = Measure)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Off_Val" = "steelblue",
+               "Def_Val" = "darkorange",
+               "Net"     = "forestgreen") 
+  ) +
+  labs(
+    title = "Top 10 Teams by Net Value (2018)",
+    x = "Team",
+    y = "Value",
+    fill = "Measure"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "top"
+  )
+```
+
+```{r, echo = FALSE}
+player_value_2018 <- shots_2018 |>
+  group_by(athlete_display_name) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots) |>
+  arrange(desc(shooting_value)) |>
+  filter(shots >= 200) |>
+  mutate(season = 2018)
+
+player_value_10 <- player_value_2018 |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value),
+                            y = shooting_value)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Season Shooting Value",
+       title = "NBA Player Shooting Value 2018") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r, echo = FALSE}
+player_value_10 <- player_value_2018 |>
+  arrange(desc(shooting_value_av)) |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value_av),
+                            y = shooting_value_av)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Shooting Value Average",
+       title = "NBA Player Average Shooting Value 2018") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+\break
+
+# 2017 NBA Analysis
+
+```{r, echo = FALSE}
+shots_2017 <- shots_2017 |>
+  filter(coordinate_y_raw < 47, coordinate_x_raw < 53)
+
+ggplot(shots_2017, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  geom_bin2d(bins = 50) +
+  labs(
+    title = "Heatmap of Shot Location 2017",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Count"
+  ) +
+  scale_fill_gradient2(low = "darkblue", mid = "red", high = "yellow",
+                       midpoint = 6000) +
+  theme(legend.position = "none")
+```
+
+```{r, echo = FALSE}
+shots_2017$shot_made <- as.factor(shots_2017$shot_made)
+shots_2017$coordinate_x_raw <- as.numeric(shots_2017$coordinate_x_raw)
+shots_2017$coordinate_x_raw <- as.numeric(shots_2017$coordinate_x_raw)
+set.seed(123)
+ind <- sample(2, nrow(shots_2017), replace = T, prob = c(0.7, 0.3))
+train <- shots_2017[ind == "1", ]
+test <- shots_2017[ind == "2", ]
+
+#Training set
+Training <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = train) 
+
+train_label <- train$shot_made
+
+train_matrix <- xgb.DMatrix(data = as.matrix(Training),
+                            label = as.numeric(train_label) - 1)
+
+#Testing set
+Testing <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = test)
+
+test_label <- test$shot_made
+
+test_matrix <- xgb.DMatrix(data = as.matrix(Testing),
+                           label = as.numeric(test_label) - 1)
+
+#set watchlist
+watchlist <- list(train = train_matrix, test = test_matrix)
+```
+
+```{r, echo=FALSE}
+###cross-validate###
+shot.xgb <- xgb.train(data = train_matrix,
+                    eta=0.01,
+                    max.depth=2,
+                    nrounds=1000,
+                   watchlist = watchlist,
+                   nthread=4,
+                   objective="binary:logistic",
+                   verbose=FALSE,
+                   eval_metric="auc")
+```
+
+```{r, include = FALSE}
+#error plot
+e <- data.frame(shot.xgb$evaluation_log)
+
+e_long <- e %>%
+  tidyr::pivot_longer(
+    cols = c(train_auc, test_auc),
+    names_to = "dataset",
+    values_to = "AUC"
+  )
+
+# Create ggplot
+ggplot(e_long, aes(x = iter, y = AUC, color = dataset)) +
+  geom_line(linewidth = 1) +
+  labs(
+    title = "Training vs Test AUC by Iteration",
+    x = "Iteration",
+    y = "AUC",
+    color = "Dataset"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+```
+
+```{r, echo = FALSE}
+pred.stats <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = shots_2017)
+
+pred_label <- shots_2017$shot_made
+
+pred_matrix <- xgb.DMatrix(data = as.matrix(pred.stats),
+                           label = as.numeric(pred_label) - 1)
+
+shots_2017$xgb_prob <- predict(shot.xgb, pred_matrix)
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2017, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = xgb_prob), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Predicted Shot Success Probabilities 2017",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Success"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2017$adj_val <- shots_2017$shot_val * shots_2017$xgb_prob
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2017, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = adj_val), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Shot Value 2017",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Value"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2017$val_added <- shots_2017$score_value - shots_2017$adj_val
+
+team_value_off_2017 <- shots_2017 |>
+  group_by(team_abbreviation) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+
+team_value_def_2017 <- shots_2017 |>
+  group_by(Defender) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+```
+
+
+```{r, echo = FALSE}
+ggplot(team_value_off_2017, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = team_abbreviation), width = 0.05) +
+  labs(title = "Comparing Shot Quality to Shooting Ability per Shot Taken 2017",
+       x = "Average Shot Quality", y = "Average Value Gained per Shot Taken")
+```
+
+```{r, echo = FALSE}
+ggplot(team_value_def_2017, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = Defender), width = 0.05) +
+  labs(title = "Comparing Defensive Shot Quality to Shooting Defense per Shot Taken 2017",
+       x = "Average Opponent Shot Quality",
+       y = "Average Value Gained per Opponent Shot Taken")
+```
+
+```{r, echo = FALSE}
+Net_Value_2017 <- data.frame(cbind(team_value_off_2017$team_abbreviation,
+                   team_value_off_2017$shooting_value_av,
+                   team_value_def_2017$shooting_value_av))
+
+colnames(Net_Value_2017) <- c("Team", "Off_Val", "Def_Val")
+
+Net_Value_2017$Off_Val <- round(as.numeric(Net_Value_2017$Off_Val), 3)
+Net_Value_2017$Def_Val <- round(as.numeric(Net_Value_2017$Def_Val), 3)
+
+Net_Value_2017$Def_Val <- Net_Value_2017$Def_Val * -1
+
+Net_Value_2017$Net <- Net_Value_2017$Off_Val + Net_Value_2017$Def_Val
+
+plot_data <- Net_Value_2017 |>
+  arrange(desc(Net)) |>     
+  slice_head(n = 10) |>          
+  select(Team, Off_Val, Def_Val, Net) |>
+  pivot_longer(cols = c(Off_Val, Def_Val, Net),
+               names_to = "Measure",
+               values_to = "Value")
+
+plot_data$Measure <- factor(plot_data$Measure, 
+                            levels = c("Net", "Off_Val",
+                                       "Def_Val"))
+
+ggplot(plot_data, aes(x = reorder(Team, Value), 
+                      y = Value, 
+                      fill = Measure)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Off_Val" = "steelblue",
+               "Def_Val" = "darkorange",
+               "Net"     = "forestgreen") 
+  ) +
+  labs(
+    title = "Top 10 Teams by Net Value (2017)",
+    x = "Team",
+    y = "Value",
+    fill = "Measure"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "top"
+  )
+```
+
+```{r, echo = FALSE}
+player_value_2017 <- shots_2017 |>
+  group_by(athlete_display_name) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots) |>
+  arrange(desc(shooting_value)) |>
+  filter(shots >= 200) |>
+  mutate(season = 2017)
+
+player_value_10 <- player_value_2017 |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value),
+                            y = shooting_value)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Season Shooting Value",
+       title = "NBA Player Shooting Value 2017") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r, echo = FALSE}
+player_value_10 <- player_value_2017 |>
+  arrange(desc(shooting_value_av)) |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value_av),
+                            y = shooting_value_av)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Shooting Value Average",
+       title = "NBA Player Average Shooting Value 2017") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+\break
+
+# 2016 NBA Analysis
+
+```{r, echo = FALSE}
+shots_2016 <- shots_2016 |>
+  filter(coordinate_y_raw < 47)
+
+ggplot(shots_2016, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  geom_bin2d(bins = 50) +
+  labs(
+    title = "Heatmap of Shot Location 2016",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Count"
+  ) +
+  scale_fill_gradient2(low = "darkblue", mid = "red", high = "yellow",
+                       midpoint = 6000) +
+  theme(legend.position = "none")
+```
+
+```{r, echo = FALSE}
+shots_2016$shot_made <- as.factor(shots_2016$shot_made)
+shots_2016$coordinate_x_raw <- as.numeric(shots_2016$coordinate_x_raw)
+shots_2016$coordinate_x_raw <- as.numeric(shots_2016$coordinate_x_raw)
+set.seed(123)
+ind <- sample(2, nrow(shots_2016), replace = T, prob = c(0.7, 0.3))
+train <- shots_2016[ind == "1", ]
+test <- shots_2016[ind == "2", ]
+
+#Training set
+Training <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = train) 
+
+train_label <- train$shot_made
+
+train_matrix <- xgb.DMatrix(data = as.matrix(Training),
+                            label = as.numeric(train_label) - 1)
+
+#Testing set
+Testing <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = test)
+
+test_label <- test$shot_made
+
+test_matrix <- xgb.DMatrix(data = as.matrix(Testing),
+                           label = as.numeric(test_label) - 1)
+
+#set watchlist
+watchlist <- list(train = train_matrix, test = test_matrix)
+```
+
+```{r, echo=FALSE}
+###cross-validate###
+shot.xgb <- xgb.train(data = train_matrix,
+                    eta=0.01,
+                    max.depth=2,
+                    nrounds=1000,
+                   watchlist = watchlist,
+                   nthread=4,
+                   objective="binary:logistic",
+                   verbose=FALSE,
+                   eval_metric="auc")
+```
+
+```{r, include = FALSE}
+#error plot
+e <- data.frame(shot.xgb$evaluation_log)
+
+e_long <- e %>%
+  tidyr::pivot_longer(
+    cols = c(train_auc, test_auc),
+    names_to = "dataset",
+    values_to = "AUC"
+  )
+
+# Create ggplot
+ggplot(e_long, aes(x = iter, y = AUC, color = dataset)) +
+  geom_line(linewidth = 1) +
+  labs(
+    title = "Training vs Test AUC by Iteration",
+    x = "Iteration",
+    y = "AUC",
+    color = "Dataset"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+```
+
+```{r, echo = FALSE}
+pred.stats <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = shots_2016)
+
+pred_label <- shots_2016$shot_made
+
+pred_matrix <- xgb.DMatrix(data = as.matrix(pred.stats),
+                           label = as.numeric(pred_label) - 1)
+
+shots_2016$xgb_prob <- predict(shot.xgb, pred_matrix)
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2016, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = xgb_prob), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Predicted Shot Success Probabilities 2016",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Success"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2016$adj_val <- shots_2016$shot_val * shots_2016$xgb_prob
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2016, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = adj_val), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Shot Value 2016",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Value"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2016$val_added <- shots_2016$score_value - shots_2016$adj_val
+
+team_value_off_2016 <- shots_2016 |>
+  group_by(team_abbreviation) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+
+team_value_def_2016 <- shots_2016 |>
+  group_by(Defender) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+```
+
+
+```{r, echo = FALSE}
+ggplot(team_value_off_2016, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = team_abbreviation), width = 0.05) +
+  labs(title = "Comparing Shot Quality to Shooting Ability per Shot Taken 2016",
+       x = "Average Shot Quality", y = "Average Value Gained per Shot Taken")
+```
+
+```{r, echo = FALSE}
+ggplot(team_value_def_2016, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = Defender), width = 0.05) +
+  labs(title = "Comparing Defensive Shot Quality to Shooting Defense per Shot Taken 2016",
+       x = "Average Opponent Shot Quality",
+       y = "Average Value Gained per Opponent Shot Taken")
+```
+
+```{r, echo = FALSE}
+Net_Value_2016 <- data.frame(cbind(team_value_off_2016$team_abbreviation,
+                   team_value_off_2016$shooting_value_av,
+                   team_value_def_2016$shooting_value_av))
+
+colnames(Net_Value_2016) <- c("Team", "Off_Val", "Def_Val")
+
+Net_Value_2016$Off_Val <- round(as.numeric(Net_Value_2016$Off_Val), 3)
+Net_Value_2016$Def_Val <- round(as.numeric(Net_Value_2016$Def_Val), 3)
+
+Net_Value_2016$Def_Val <- Net_Value_2016$Def_Val * -1
+
+Net_Value_2016$Net <- Net_Value_2016$Off_Val + Net_Value_2016$Def_Val
+
+plot_data <- Net_Value_2016 |>
+  arrange(desc(Net)) |>     
+  slice_head(n = 10) |>          
+  select(Team, Off_Val, Def_Val, Net) |>
+  pivot_longer(cols = c(Off_Val, Def_Val, Net),
+               names_to = "Measure",
+               values_to = "Value")
+
+plot_data$Measure <- factor(plot_data$Measure, 
+                            levels = c("Net", "Off_Val",
+                                       "Def_Val"))
+
+ggplot(plot_data, aes(x = reorder(Team, Value), 
+                      y = Value, 
+                      fill = Measure)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Off_Val" = "steelblue",
+               "Def_Val" = "darkorange",
+               "Net"     = "forestgreen") 
+  ) +
+  labs(
+    title = "Top 10 Teams by Net Value (2016)",
+    x = "Team",
+    y = "Value",
+    fill = "Measure"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "top"
+  )
+```
+
+```{r, echo = FALSE}
+player_value_2016 <- shots_2016 |>
+  group_by(athlete_display_name) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots) |>
+  arrange(desc(shooting_value)) |>
+  filter(shots >= 200) |>
+  mutate(season = 2016)
+
+player_value_10 <- player_value_2016 |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value),
+                            y = shooting_value)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Season Shooting Value",
+       title = "NBA Player Shooting Value 2016") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r, echo = FALSE}
+player_value_10 <- player_value_2016 |>
+  arrange(desc(shooting_value_av)) |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value_av),
+                            y = shooting_value_av)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Shooting Value Average",
+       title = "NBA Player Average Shooting Value 2016") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+\break
+
+# 2015 NBA Analysis
+
+```{r, echo = FALSE}
+shots_2015 <- shots_2015 |>
+  filter(coordinate_y_raw < 47)
+
+ggplot(shots_2015, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  geom_bin2d(bins = 50) +
+  labs(
+    title = "Heatmap of Shot Location 2015",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Count"
+  ) +
+  scale_fill_gradient2(low = "darkblue", mid = "red", high = "yellow",
+                       midpoint = 7000) +
+  theme(legend.position = "none")
+```
+
+```{r, echo = FALSE}
+shots_2015$shot_made <- as.factor(shots_2015$shot_made)
+shots_2015$coordinate_x_raw <- as.numeric(shots_2015$coordinate_x_raw)
+shots_2015$coordinate_x_raw <- as.numeric(shots_2015$coordinate_x_raw)
+set.seed(123)
+ind <- sample(2, nrow(shots_2015), replace = T, prob = c(0.7, 0.3))
+train <- shots_2015[ind == "1", ]
+test <- shots_2015[ind == "2", ]
+
+#Training set
+Training <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = train) 
+
+train_label <- train$shot_made
+
+train_matrix <- xgb.DMatrix(data = as.matrix(Training),
+                            label = as.numeric(train_label) - 1)
+
+#Testing set
+Testing <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = test)
+
+test_label <- test$shot_made
+
+test_matrix <- xgb.DMatrix(data = as.matrix(Testing),
+                           label = as.numeric(test_label) - 1)
+
+#set watchlist
+watchlist <- list(train = train_matrix, test = test_matrix)
+```
+
+```{r, echo=FALSE}
+###cross-validate###
+shot.xgb <- xgb.train(data = train_matrix,
+                    eta=0.01,
+                    max.depth=2,
+                    nrounds=1000,
+                   watchlist = watchlist,
+                   nthread=4,
+                   objective="binary:logistic",
+                   verbose=FALSE,
+                   eval_metric="auc")
+```
+
+```{r, include = FALSE}
+#error plot
+e <- data.frame(shot.xgb$evaluation_log)
+
+e_long <- e %>%
+  tidyr::pivot_longer(
+    cols = c(train_auc, test_auc),
+    names_to = "dataset",
+    values_to = "AUC"
+  )
+
+# Create ggplot
+ggplot(e_long, aes(x = iter, y = AUC, color = dataset)) +
+  geom_line(linewidth = 1) +
+  labs(
+    title = "Training vs Test AUC by Iteration",
+    x = "Iteration",
+    y = "AUC",
+    color = "Dataset"
+  ) +
+  theme_minimal() +
+  theme(
+    text = element_text(size = 12),
+    plot.title = element_text(face = "bold", hjust = 0.5)
+  )
+```
+
+```{r, echo = FALSE}
+pred.stats <- sparse.model.matrix(shot_made ~ coordinate_x_raw + coordinate_y_raw,
+                                data = shots_2015)
+
+pred_label <- shots_2015$shot_made
+
+pred_matrix <- xgb.DMatrix(data = as.matrix(pred.stats),
+                           label = as.numeric(pred_label) - 1)
+
+shots_2015$xgb_prob <- predict(shot.xgb, pred_matrix)
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2015, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = xgb_prob), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Predicted Shot Success Probabilities 2015",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Success"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2015$adj_val <- shots_2015$shot_val * shots_2015$xgb_prob
+```
+
+```{r, echo = FALSE}
+ggplot(shots_2015, aes(x = coordinate_x_raw, y = coordinate_y_raw)) +
+  stat_summary_2d(aes(z = adj_val), bins = 50, fun = mean) +
+  scale_fill_gradient(low = "blue", high = "yellow") +
+  labs(
+    title = "Smoothed Heatmap of Shot Value 2015",
+    x = "X Coordinate",
+    y = "Y Coordinate",
+    fill = "Value"
+  ) +
+  theme_minimal()
+```
+
+```{r, echo = FALSE}
+shots_2015$val_added <- shots_2015$score_value - shots_2015$adj_val
+
+team_value_off_2015 <- shots_2015 |>
+  group_by(team_abbreviation) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+
+team_value_def_2015 <- shots_2015 |>
+  group_by(Defender) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots)
+```
+
+```{r, echo = FALSE}
+ggplot(team_value_off_2015, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = team_abbreviation), width = 0.05) +
+  labs(title = "Comparing Shot Quality to Shooting Ability per Shot Taken 2015",
+       x = "Average Shot Quality", y = "Average Value Gained per Shot Taken")
+```
+
+```{r, echo = FALSE}
+ggplot(team_value_def_2015, aes(x = shot_value_av, y = shooting_value_av)) +
+  geom_nba_logos(aes(team_abbr = Defender), width = 0.05) +
+  labs(title = "Comparing Defensive Shot Quality to Shooting Defense per Shot Taken 2015",
+       x = "Average Opponent Shot Quality",
+       y = "Average Value Gained per Opponent Shot Taken")
+```
+
+```{r, echo = FALSE}
+Net_Value_2015 <- data.frame(cbind(team_value_off_2015$team_abbreviation,
+                   team_value_off_2015$shooting_value_av,
+                   team_value_def_2015$shooting_value_av))
+
+colnames(Net_Value_2015) <- c("Team", "Off_Val", "Def_Val")
+
+Net_Value_2015$Off_Val <- round(as.numeric(Net_Value_2015$Off_Val), 3)
+Net_Value_2015$Def_Val <- round(as.numeric(Net_Value_2015$Def_Val), 3)
+
+Net_Value_2015$Def_Val <- Net_Value_2015$Def_Val * -1
+
+Net_Value_2015$Net <- Net_Value_2015$Off_Val + Net_Value_2015$Def_Val
+
+plot_data <- Net_Value_2015 |>
+  arrange(desc(Net)) |>     
+  slice_head(n = 10) |>          
+  select(Team, Off_Val, Def_Val, Net) |>
+  pivot_longer(cols = c(Off_Val, Def_Val, Net),
+               names_to = "Measure",
+               values_to = "Value")
+
+plot_data$Measure <- factor(plot_data$Measure, 
+                            levels = c("Net", "Off_Val",
+                                       "Def_Val"))
+
+ggplot(plot_data, aes(x = reorder(Team, Value), 
+                      y = Value, 
+                      fill = Measure)) +
+  geom_col(position = position_dodge(width = 0.8), width = 0.7) +
+  coord_flip() +
+  scale_fill_manual(
+    values = c("Off_Val" = "steelblue",
+               "Def_Val" = "darkorange",
+               "Net"     = "forestgreen") 
+  ) +
+  labs(
+    title = "Top 10 Teams by Net Value (2015)",
+    x = "Team",
+    y = "Value",
+    fill = "Measure"
+  ) +
+  theme_minimal(base_size = 14) +
+  theme(
+    plot.title = element_text(face = "bold", hjust = 0.5),
+    legend.position = "top"
+  )
+```
+
+```{r, echo = FALSE}
+player_value_2015 <- shots_2015 |>
+  group_by(athlete_display_name) |>
+  summarize(shooting_value = sum(val_added), shot_value = sum(adj_val),
+            shots = n()) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots) |>
+  arrange(desc(shooting_value)) |>
+  filter(shots >= 200) |>
+  mutate(season = 2015)
+
+player_value_10 <- player_value_2015 |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value),
+                            y = shooting_value)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Season Shooting Value",
+       title = "NBA Player Shooting Value 2015") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+```{r, echo = FALSE}
+player_value_10 <- player_value_2015 |>
+  arrange(desc(shooting_value_av)) |>
+  slice_head(n = 10)
+
+ggplot(player_value_10, aes(x = reorder(athlete_display_name, -shooting_value_av),
+                            y = shooting_value_av)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Shooting Value Average",
+       title = "NBA Player Average Shooting Value 2015") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+# Most Valuable Shot Makers From 2015-2025
+
+```{r, echo = FALSE}
+player_value <- rbind(player_value_2025, player_value_2024, player_value_2023,
+                      player_value_2022, player_value_2021, player_value_2020,
+                      player_value_2019, player_value_2018, player_value_2017,
+                      player_value_2016, player_value_2015)
+
+player_value_tot <- player_value |>
+  group_by(athlete_display_name) |>
+  summarize(shooting_value = sum(shooting_value), shot_value = sum(shot_value),
+            shots = sum(shots)) |>
+  ungroup() |>
+  mutate(shooting_value_av = shooting_value/shots,
+         shot_value_av = shot_value/shots) |>
+  arrange(desc(shooting_value)) |>
+  filter(shots >= 200) |>
+  arrange(desc(shooting_value))
+
+player_value_tot_10 <- player_value_tot |>
+  slice_head(n = 10)
+
+ggplot(player_value_tot_10, aes(x = reorder(athlete_display_name,
+                                            -shooting_value),
+                            y = shooting_value)) +
+  geom_bar(stat = "identity", color = "black", fill = "steelblue") +
+  labs(x = "Player", y = "Season Shooting Value",
+       title = "NBA Player Shooting Value 2015-2025") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
